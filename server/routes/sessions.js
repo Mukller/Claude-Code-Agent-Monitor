@@ -28,6 +28,7 @@ const {
   findTranscriptPath,
   findSubagentTranscriptPath,
 } = require("../lib/claude-home");
+const { isCwdIgnored } = require("../lib/cwd-filter");
 
 const router = Router();
 const MAX_TASK_PROGRESS_ROWS = 100;
@@ -565,6 +566,14 @@ router.post("/", (req, res) => {
   const { id, name, cwd, model, metadata } = req.body;
   if (!id) {
     return res.status(400).json({ error: { code: "INVALID_INPUT", message: "id is required" } });
+  }
+
+  // Apply the MONITOR_IGNORE_CWD filter here too, not only on the hook path:
+  // this route persists a caller-supplied cwd straight into the sessions table.
+  if (isCwdIgnored(cwd)) {
+    return res.status(400).json({
+      error: { code: "INVALID_INPUT", message: "cwd is excluded by MONITOR_IGNORE_CWD" },
+    });
   }
 
   const existing = stmts.getSession.get(id);

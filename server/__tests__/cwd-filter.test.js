@@ -3,6 +3,8 @@
  * ingest-time ignore filter. Tests cover all three pattern forms (exact, /*,
  * /**), edge cases (empty env, bad types, backslash normalisation, trailing
  * slashes), and the fast-path when no patterns are configured.
+ *
+ * @author Son Nguyen <hoangson091104@gmail.com>
  */
 
 "use strict";
@@ -148,5 +150,50 @@ describe("Windows backslash normalisation", () => {
   });
   it("matches when pattern uses Windows backslashes", () => {
     assert.ok(match("C:\\Users\\user\\private", "C:/Users/user/private"));
+  });
+});
+
+// ─── write-path coverage ───────────────────────────────────────────────────
+
+describe("every cwd persistence path is filtered", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const repoRoot = path.resolve(__dirname, "..", "..");
+
+  // Each of these writes a cwd into the sessions/events tables and must
+  // therefore consult isCwdIgnored before the first insert.
+  const PATHS = [
+    "server/routes/hooks.js",
+    "server/routes/sessions.js",
+    "scripts/import-history.js",
+  ];
+
+  for (const rel of PATHS) {
+    it(`${rel} calls isCwdIgnored`, () => {
+      const src = fs.readFileSync(path.join(repoRoot, rel), "utf8");
+      assert.match(src, /isCwdIgnored\(/);
+    });
+  }
+
+  it("the session POST route filters before insertSession", () => {
+    const src = fs.readFileSync(path.join(repoRoot, "server/routes/sessions.js"), "utf8");
+    const post = src.indexOf('router.post("/", (req, res) =>');
+    assert.ok(post !== -1, "POST / route not found");
+    const filter = src.indexOf("isCwdIgnored(", post);
+    const insert = src.indexOf("insertSession.run(", post);
+    assert.ok(filter !== -1, "isCwdIgnored not called in POST /");
+    assert.ok(insert !== -1, "insertSession.run not called in POST /");
+    assert.ok(filter < insert, "filter must run before the insert");
+  });
+
+  it("importSession filters before insertSession", () => {
+    const src = fs.readFileSync(path.join(repoRoot, "scripts/import-history.js"), "utf8");
+    const fn = src.indexOf("function importSession(");
+    assert.ok(fn !== -1, "importSession not found");
+    const filter = src.indexOf("isCwdIgnored(", fn);
+    const insert = src.indexOf("insertSession.run(", fn);
+    assert.ok(filter !== -1, "isCwdIgnored not called in importSession");
+    assert.ok(insert !== -1, "insertSession.run not called in importSession");
+    assert.ok(filter < insert, "filter must run before the insert");
   });
 });

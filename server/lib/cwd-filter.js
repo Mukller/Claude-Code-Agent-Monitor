@@ -11,6 +11,8 @@
  *   /prefix/**      — /prefix itself and all descendants
  *
  * See also: .env.example → MONITOR_IGNORE_CWD
+ *
+ * @author Son Nguyen <hoangson091104@gmail.com>
  */
 
 "use strict";

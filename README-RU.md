@@ -1,6 +1,6 @@
 # Agent Dashboard для Claude Code
 
-### Платформа мониторинга активности Claude Code агентов в режиме реального времени 🚀
+## Платформа мониторинга активности Claude Code агентов в режиме реального времени 🚀
 
 Профессиональный дашборд для отслеживания и визуализации сессий Claude Code агентов, использования инструментов и оркестрации субагентов в реальном времени. Построен на Node.js, Express, React и SQLite, интегрируется напрямую с Claude Code через нативную систему хуков для бесшовного отслеживания сессий и аналитики.
 
@@ -288,7 +288,7 @@ kubectl apply -k deployments/kustomize/
 
 ## Структура проекта
 
-```
+```text
 Claude-Code-Agent-Monitor/
 ├── bin/                # Скрипты хуков и CLI
 ├── client/             # React + TypeScript + Vite
@@ -321,7 +321,7 @@ curl http://localhost:4820/api/health
 
 ### Ошибка SQLite при запуске
 
-```
+```text
 Error: better-sqlite3 could not be loaded
 ```
 

@@ -31,6 +31,7 @@ const {
   getTranscriptSnapshotDir,
 } = require("../server/lib/claude-home");
 const { extractFirstUserText, appendRecentUserMessage } = require("../server/lib/transcript-cache");
+const { isCwdIgnored } = require("../server/lib/cwd-filter");
 const CLAUDE_DIR = getClaudeHome();
 const PROJECTS_DIR = getProjectsDir();
 
@@ -1178,6 +1179,11 @@ function reconcileSubagentParents(dbModule, sessionId, mainAgentId, parsedSubage
  */
 function importSession(dbModule, session) {
   const { db, stmts } = dbModule;
+  // Apply the MONITOR_IGNORE_CWD filter here too, not only on the hook path:
+  // this importer persists session.cwd straight into the sessions table.
+  if (isCwdIgnored(session.cwd)) {
+    return { skipped: true, ignored: true };
+  }
   const existing = stmts.getSession.get(session.sessionId);
   if (existing) {
     const meta = existing.metadata ? JSON.parse(existing.metadata) : {};
