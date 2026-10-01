@@ -330,9 +330,36 @@ function syncCardPromptPreview(sessionId, result) {
   }
 }
 
-const processEvent = db.transaction((hookType, data) => {
-  const sessionId = data.session_id;
+const processEvent = db.transaction((hookType, rawData) => {
+  const sessionId = rawData.session_id;
   if (!sessionId) return null;
+
+  // Apply the privacy policy FIRST, before anything derived from the payload is
+  // persisted. Previously this ran just before insertEvent, which left fields
+  // written earlier in this transaction populated from the raw payload — most
+  // visibly a subagent name built from `tool_input.prompt`, so a secret in the
+  // prompt landed in the agents table in plaintext and was only redacted from
+  // the event record. Everything below now reads the sanitized `data`.
+  // Fail-safe: applyPrivacyPolicy never throws and returns the input unchanged
+  // on error, so ingestion is not blocked if the policy misbehaves.
+  const { data: sanitizedData, privacy_meta } = applyPrivacyPolicy(rawData);
+
+  // transcript_path is operational metadata the watchdog reads back out of
+  // persisted events (see watchdogCheck) to locate the session's transcript
+  // file. It can incidentally match the "Home directory paths" detector, so
+  // carry it through explicitly here rather than reading the raw payload
+  // further down — this is the one deliberate exception to "use sanitized
+  // data", and it is an operational path, not user content.
+  let data = sanitizedData;
+  if (
+    data &&
+    typeof data === "object" &&
+    rawData &&
+    typeof rawData === "object" &&
+    "transcript_path" in data
+  ) {
+    data = { ...data, transcript_path: rawData.transcript_path };
+  }
 
   const session = ensureSession(sessionId, data);
 
@@ -1104,25 +1131,9 @@ const processEvent = db.transaction((hookType, data) => {
   // Bump session updated_at on every event
   stmts.touchSession.run(sessionId);
 
-  // Apply privacy policy to the payload before persistence. Fail-safe: errors
-  // degrade to storing the original data so ingestion is never blocked.
-  const { data: redactedData, privacy_meta } = applyPrivacyPolicy(data);
-
-  // transcript_path is operational metadata the watchdog reads back out of
-  // persisted events (see watchdogCheck) to locate the session's transcript
-  // file. It can incidentally match the "Home directory paths" detector, so
-  // restore the original value after redaction — masking it would silently
-  // break transcript recovery for every redacted session.
-  let finalData = redactedData;
-  if (
-    finalData &&
-    typeof finalData === "object" &&
-    data &&
-    typeof data === "object" &&
-    "transcript_path" in finalData
-  ) {
-    finalData = { ...finalData, transcript_path: data.transcript_path };
-  }
+  // The payload was already sanitized at the top of this transaction, so
+  // everything persisted from here on — this event record included — uses the
+  // redacted values.
 
   stmts.insertEvent.run(
     sessionId,
@@ -1130,7 +1141,7 @@ const processEvent = db.transaction((hookType, data) => {
     eventType,
     toolName,
     summary,
-    finalData !== null ? JSON.stringify(finalData) : null
+    data !== null ? JSON.stringify(data) : null
     // created_at uses default
   );
 

@@ -70,7 +70,7 @@ function buildExportUrl(
 }
 
 function CellValue({ col, value }: { col: string; value: unknown }) {
-  if (value == null || value === "") return <span className="text-gray-600">вЂ”</span>;
+  if (value == null || value === "") return <span className="text-gray-600">—</span>;
   if (DATETIME_COLS.has(col) && typeof value === "string") {
     return <span title={value}>{formatDateTime(value)}</span>;
   }
@@ -78,7 +78,7 @@ function CellValue({ col, value }: { col: string; value: unknown }) {
   if (s.length > 60)
     return (
       <span title={s} className="truncate max-w-[200px] block">
-        {s.slice(0, 60)}вЂ¦
+        {s.slice(0, 60)}…
       </span>
     );
   return <span>{s}</span>;
@@ -116,13 +116,21 @@ export function QueryExplorer() {
   );
 
   const runQuery = useCallback(
-    async (off = 0) => {
+    async (
+      off = 0,
+      // Sorting is the one place where the request must not wait for a
+      // re-render: the click handler knows the next sort values, but by the
+      // time a re-render produces a new runQuery, a callback captured from the
+      // current render still carries the previous sort. Passing the values
+      // explicitly keeps the request and the UI in step.
+      sort?: { sort_by: string; sort_dir: SortDir }
+    ) => {
       setLoading(true);
       setError(null);
       try {
         const data = await api.query.run({
           entity,
-          filters: activeFilters,
+          filters: sort ? { ...activeFilters, ...sort } : activeFilters,
           limit: PAGE_SIZE,
           offset: off,
           scope: scopeParam ?? "",
@@ -402,17 +410,16 @@ export function QueryExplorer() {
                       key={col}
                       className={`px-3 py-2 text-xs font-medium text-gray-400 cursor-pointer select-none whitespace-nowrap hover:text-gray-200 ${sortBy === col ? "text-[#58a6ff]" : ""}`}
                       onClick={() => {
-                        if (sortBy === col) {
-                          setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-                        } else {
-                          setSortBy(col);
-                          setSortDir("desc");
-                        }
-                        setTimeout(() => runQuery(0), 0);
+                        const nextSortBy = sortBy === col ? sortBy : col;
+                        const nextSortDir: SortDir =
+                          sortBy === col ? (sortDir === "asc" ? "desc" : "asc") : "desc";
+                        setSortBy(nextSortBy);
+                        setSortDir(nextSortDir);
+                        runQuery(0, { sort_by: nextSortBy, sort_dir: nextSortDir });
                       }}
                     >
                       {col}
-                      {sortBy === col ? (sortDir === "asc" ? " в†‘" : " в†“") : ""}
+                      {sortBy === col ? (sortDir === "asc" ? " ↑" : " ↓") : ""}
                     </th>
                   ))}
                 </tr>

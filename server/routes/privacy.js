@@ -11,6 +11,7 @@ const {
   applyPrivacyPolicy,
   previewPrivacyPolicy,
   invalidateCache,
+  validateRulePattern,
   stmts,
 } = require("../lib/privacy");
 
@@ -55,10 +56,9 @@ router.post("/rules", (req, res) => {
     return res.status(400).json({ error: `field_path is required for action "${action}"` });
   }
   if (pattern) {
-    try {
-      new RegExp(pattern);
-    } catch {
-      return res.status(400).json({ error: "pattern is not a valid regex" });
+    const check = validateRulePattern(pattern);
+    if (!check.ok) {
+      return res.status(400).json({ error: check.error });
     }
   }
   try {
@@ -109,10 +109,9 @@ router.put("/rules/:id", (req, res) => {
     return res.status(400).json({ error: `field_path is required for action "${nextAction}"` });
   }
   if (nextPattern) {
-    try {
-      new RegExp(nextPattern);
-    } catch {
-      return res.status(400).json({ error: "pattern is not a valid regex" });
+    const check = validateRulePattern(nextPattern);
+    if (!check.ok) {
+      return res.status(400).json({ error: check.error });
     }
   }
 

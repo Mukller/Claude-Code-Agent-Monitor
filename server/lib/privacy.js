@@ -249,6 +249,111 @@ function applyRule(payload, rule, stats) {
 // Public API
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Pattern safety
+// ---------------------------------------------------------------------------
+
+// Rules are evaluated against every hook payload string inside the
+// processEvent SQLite transaction, so a pattern with catastrophic backtracking
+// is not just slow — it holds a write transaction and stalls ingestion.
+// `new RegExp()` only proves the pattern compiles; (a+)+$ compiles fine and
+// takes ~4s on a 26-character non-matching input.
+//
+// This rejects the nested-unbounded-quantifier shapes that cause exponential
+// backtracking. It is a heuristic, not a proof: it cannot make arbitrary
+// regexes safe. Matching a linear-time engine would, at the cost of a native
+// dependency and of lookaround/backreference support.
+const MAX_PATTERN_LENGTH = 500;
+
+function hasUnboundedQuantifier(body) {
+  return /[*+]|\{\d+,\}/.test(body);
+}
+
+function hasNestedUnboundedQuantifier(pattern) {
+  // Strip character classes and escapes so quantifier-looking characters inside
+  // them are not mistaken for real quantifiers.
+  let p = pattern.replace(/\[[^\]]*\]/g, "[]").replace(/\\./g, "\\");
+
+  const stack = [];
+  for (let i = 0; i < p.length; i++) {
+    const ch = p[i];
+    if (ch === "(") {
+      stack.push(i);
+      continue;
+    }
+    if (ch === ")") {
+      const start = stack.pop();
+      if (start === undefined) continue;
+      // Quantifier immediately after the closing paren?
+      const next = p.slice(i + 1);
+      const quantified = /^(?:[*+?]|\{\d+(?:,\d*)?\})/.test(next);
+      const inner = p.slice(start + 1, i);
+      // A group that is itself unbounded and contains an unbounded quantifier
+      // is the catastrophic case: (a+)+ , (a*)* , (a|a)* ...
+      const unboundedGroup = next[0] === "*" || next[0] === "+" || /^\{\d+,\}/.test(next);
+      if (quantified && unboundedGroup && hasUnboundedQuantifier(inner)) return true;
+      // Duplicate alternation branches under an unbounded quantifier: (a|a)+ .
+      // Note this only catches literally identical branches; the general
+      // alternation case, e.g. (a|aa)+$, needs real automaton analysis and is
+      // not covered here.
+      if (quantified && unboundedGroup && hasDuplicateAlternationBranch(inner)) return true;
+      continue;
+    }
+  }
+  return false;
+}
+
+/** True when a group body is an alternation containing the same branch twice. */
+function hasDuplicateAlternationBranch(body) {
+  if (!body.includes("|")) return false;
+  const branches = [];
+  let depth = 0;
+  let current = "";
+  for (const ch of body) {
+    if (ch === "(") depth++;
+    else if (ch === ")") depth--;
+    if (ch === "|" && depth === 0) {
+      branches.push(current);
+      current = "";
+    } else {
+      current += ch;
+    }
+  }
+  branches.push(current);
+  const nonEmpty = branches.filter((b) => b !== "");
+  return new Set(nonEmpty).size !== nonEmpty.length;
+}
+
+/**
+ * Validate a user-supplied pattern before it is persisted.
+ * @returns {{ok: true} | {ok: false, error: string}}
+ */
+function validateRulePattern(pattern) {
+  if (typeof pattern !== "string" || pattern === "") return { ok: true };
+  if (pattern.length > MAX_PATTERN_LENGTH) {
+    return {
+      ok: false,
+      error: `pattern is too long (max ${MAX_PATTERN_LENGTH} characters)`,
+    };
+  }
+  try {
+    new RegExp(pattern);
+  } catch {
+    return { ok: false, error: "pattern is not a valid regex" };
+  }
+  if (hasNestedUnboundedQuantifier(pattern)) {
+    return {
+      ok: false,
+      error:
+        "pattern has nested unbounded quantifiers (for example `(a+)+`), which can " +
+        "match exponentially slowly and stall event ingestion",
+    };
+  }
+  return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+
 /** Load enabled rules ordered by priority (cached, invalidated on writes). */
 let _rulesCache = null;
 let _enabledGlobal = null;
@@ -403,5 +508,6 @@ module.exports = {
   previewPrivacyPolicy,
   invalidateCache,
   isPrivacyEnabled,
+  validateRulePattern,
   stmts: stmts,
 };

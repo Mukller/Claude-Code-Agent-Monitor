@@ -192,6 +192,55 @@ describe("GET /api/query/facets", () => {
     assert.equal(status, 200);
     assert.ok(Array.isArray(data.statuses));
   });
+
+  // The seeded session has source='local', provider='claude'. A source or
+  // provider scope adds a WHERE clause to the facet query; these must not
+  // produce a second WHERE, which SQLite rejects as a syntax error and which
+  // the client treats as best-effort, silently dropping the filter controls.
+  it("source-scoped facets still return 200 for sessions", async () => {
+    const { status, data } = await jsonGet("/api/query/facets?entity=sessions&sources=local");
+    assert.equal(status, 200);
+    assert.ok(Array.isArray(data.statuses));
+    assert.ok(data.statuses.includes("completed"));
+  });
+
+  it("source-scoped facets still return 200 for agents", async () => {
+    const { status, data } = await jsonGet("/api/query/facets?entity=agents&sources=local");
+    assert.equal(status, 200);
+    assert.ok(Array.isArray(data.statuses));
+  });
+
+  it("source-scoped facets still return 200 for events", async () => {
+    const { status, data } = await jsonGet("/api/query/facets?entity=events&sources=local");
+    assert.equal(status, 200);
+    assert.ok(Array.isArray(data.event_types));
+    assert.ok(data.event_types.includes("tool_use"));
+  });
+
+  it("provider-scoped facets still return 200 for agents", async () => {
+    const { status, data } = await jsonGet("/api/query/facets?entity=agents&providers=claude");
+    assert.equal(status, 200);
+    assert.ok(Array.isArray(data.statuses));
+  });
+
+  it("combined source and provider scope still returns 200", async () => {
+    const { status } = await jsonGet(
+      "/api/query/facets?entity=events&sources=local&providers=claude"
+    );
+    assert.equal(status, 200);
+  });
+
+  // agents.id is the agent's own primary key, but source/provider filters are
+  // keyed on the session. Matching agents.id compares an agent id against a
+  // session id, so a scoped agent facet silently returns nothing.
+  it("agent facets scope via session_id, not agents.id", async () => {
+    const { status, data } = await jsonGet("/api/query/facets?entity=agents&sources=local");
+    assert.equal(status, 200);
+    assert.ok(
+      data.statuses.includes("completed"),
+      "agent facet should match through agents.session_id"
+    );
+  });
 });
 
 describe("GET /api/query/export", () => {

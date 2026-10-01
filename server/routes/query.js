@@ -289,51 +289,62 @@ router.get("/facets", (req, res) => {
   const facets = {};
   if (entity === "sessions" || entity === "agents") {
     const table = entity === "sessions" ? "sessions" : "agents";
-    const clauses = [];
+    // sessions is keyed by `id`, agents by `session_id`; source and provider
+    // filters are properties of the session, so the column differs per table.
+    const sessionCol = entity === "sessions" ? "id" : "session_id";
+    const clauses = ["status IS NOT NULL"];
     const params = [];
-    const sourceScope = sessionIdInSourcesClause(filters.sources, "id");
+    const sourceScope = sessionIdInSourcesClause(filters.sources, sessionCol);
     if (sourceScope.clause) {
       clauses.push(sourceScope.clause);
       params.push(...sourceScope.params);
     }
-    const providerScope = sessionIdInProvidersClause(filters.providers, "id");
+    const providerScope = sessionIdInProvidersClause(filters.providers, sessionCol);
     if (providerScope.clause) {
       clauses.push(providerScope.clause);
       params.push(...providerScope.params);
     }
-    const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+    // One WHERE clause only: the scope predicates and `status IS NOT NULL`
+    // are combined before the keyword is emitted. Emitting `WHERE <scope>
+    // WHERE status IS NOT NULL` is a SQLite syntax error, and the client
+    // treats facet failures as best-effort, so the filters would just vanish.
     facets.statuses = db
       .prepare(
-        `SELECT DISTINCT status FROM ${table} ${where} WHERE status IS NOT NULL ORDER BY status`
+        `SELECT DISTINCT status FROM ${table} WHERE ${clauses.join(" AND ")} ORDER BY status`
       )
       .all(...params)
       .map((r) => r.status);
   }
   if (entity === "events") {
-    const clauses = [];
-    const params = [];
     const sourceScope = sessionIdInSourcesClause(filters.sources, "session_id");
-    if (sourceScope.clause) {
-      clauses.push(sourceScope.clause);
-      params.push(...sourceScope.params);
-    }
     const providerScope = sessionIdInProvidersClause(filters.providers, "session_id");
-    if (providerScope.clause) {
-      clauses.push(providerScope.clause);
-      params.push(...providerScope.params);
+    const scopeClauses = [];
+    const scopeParams = [];
+    if (sourceScope.clause) {
+      scopeClauses.push(sourceScope.clause);
+      scopeParams.push(...sourceScope.params);
     }
-    const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+    if (providerScope.clause) {
+      scopeClauses.push(providerScope.clause);
+      scopeParams.push(...providerScope.params);
+    }
     facets.event_types = db
       .prepare(
-        `SELECT DISTINCT event_type FROM events ${where} WHERE event_type IS NOT NULL ORDER BY event_type`
+        `SELECT DISTINCT event_type FROM events WHERE ${[
+          ...scopeClauses,
+          "event_type IS NOT NULL",
+        ].join(" AND ")} ORDER BY event_type`
       )
-      .all(...params)
+      .all(...scopeParams)
       .map((r) => r.event_type);
     facets.tool_names = db
       .prepare(
-        `SELECT DISTINCT tool_name  FROM events ${where} WHERE tool_name  IS NOT NULL ORDER BY tool_name`
+        `SELECT DISTINCT tool_name FROM events WHERE ${[
+          ...scopeClauses,
+          "tool_name IS NOT NULL",
+        ].join(" AND ")} ORDER BY tool_name`
       )
-      .all(...params)
+      .all(...scopeParams)
       .map((r) => r.tool_name);
   }
   res.json({ entity, ...facets });
